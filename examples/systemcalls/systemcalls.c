@@ -1,5 +1,10 @@
 #include "systemcalls.h"
-
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -16,8 +21,17 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    int return_val = system(cmd);
 
-    return true;
+    // Return a boolean true if the system() call completed with success
+    if (return_val == 0) {
+        return true;
+    }
+    // or false() if it returned a failure
+    else {
+        return false;
+    }
+    //return true;
 }
 
 /**
@@ -58,7 +72,43 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    // Create a child process
+    pid_t child_pid = fork();
 
+    if (child_pid == -1) {
+        // Failed to create child process
+        return false;
+    } else if (child_pid == 0) {
+        // This is the child process
+
+        // Execute the command with execv
+        if (execv(command[0], command) == -1) {
+            // Failed to execute command
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        // This is the parent process
+
+        // Wait for the child process to complete
+        int status;
+        if (waitpid(child_pid, &status, 0) == -1) {
+            // Failed to wait for child process
+            return false;
+        } else if (WIFEXITED(status)) {
+            // Child process exited normally
+            int exit_status = WEXITSTATUS(status);
+            if (exit_status == 0) {
+                // Command executed successfully
+                return true;
+            } else {
+                // Command returned non-zero exit status
+                return false;
+            }
+        } else {
+            // Child process terminated abnormally
+            return false;
+        }
+    }
     va_end(args);
 
     return true;
@@ -92,7 +142,43 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    int saved_stdout = dup(STDOUT_FILENO); // Step 1
 
+    int output_fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR); // Step 2
+
+    if (output_fd == -1) {
+        perror("open");
+        return false;
+    }
+
+    if (dup2(output_fd, STDOUT_FILENO) == -1) { // Step 3
+        perror("dup2");
+        return false;
+    }
+
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        perror("fork");
+        return false;
+    } else if (pid == 0) { // child process
+        execv(command[0], command); // Step 4
+        perror("execv");
+        exit(EXIT_FAILURE);
+    } else { // parent process
+        int status;
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("waitpid");
+            return false;
+        }
+    }
+
+    if (dup2(saved_stdout, STDOUT_FILENO) == -1) { // Step 5
+        perror("dup2");
+        return false;
+    }
+
+    close(output_fd); // Step 6
     va_end(args);
 
     return true;
